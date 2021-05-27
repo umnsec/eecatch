@@ -5,14 +5,14 @@ set (AnalyzerSourceCodes
 	Analyzer.cc
 	CallGraph.h
 	CallGraph.cc
+	ExaggerateError.h
+	ExaggerateError.cc
 	SecurityChecks.h
 	SecurityChecks.cc
 	PointerAnalysis.h
 	PointerAnalysis.cc
 	DataFlowAnalysis.h
 	DataFlowAnalysis.cc
-	MissingChecks.h
-	MissingChecks.cc
 	TypeInitializer.cc
 	TypeInitializer.h
 	)

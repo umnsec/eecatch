@@ -12,7 +12,6 @@
 #include <llvm/IR/InlineAsm.h>
 #include <llvm/ADT/StringExtras.h>
 #include <llvm/Analysis/CallGraph.h>
-#include <regex>
 
 #include "SecurityChecks.h"
 #include "Config.h"
@@ -33,10 +32,6 @@
 //#define DEBUG_PRINT
 //#define TEST_CASE
 
-// Refine the assembly functions to detect more SecurityChecks
-//#define ASM_FUNC
-//static const std::regex pattern("[a-zA-Z_]+(\\s*)(?=\\()");
-
 using namespace llvm;
 using namespace std;
 
@@ -51,6 +46,8 @@ bool SecurityChecksPass::isValueErrno(Value *V, Function *F) {
 
 	// The value is a constant integer.
 	if (ConstantInt *CI = dyn_cast<ConstantInt>(V)) {
+		if (CI->getType()->getBitWidth() > 64)
+			return false;
 		const int64_t value = CI->getValue().getSExtValue();
 		// The value is an errno (negative or positive).
 		if (is_errno(-value) || is_errno(value)
@@ -243,7 +240,7 @@ void SecurityChecksPass::markBBErr(BasicBlock *BB,
 	
 	assert(BB);
 
-	if (bbErrMap.count(BB) != 0)
+	if (bbErrMap.count(BB) != 0) 
 		bbErrMap[BB] |= flag;
 	else
 		bbErrMap[BB] = flag;
@@ -505,6 +502,7 @@ bool SecurityChecksPass::markAllEdgesErrFlag(Function *F, BBErrMap &bbErrMap,
 		if ((NewFlag & ERR_RETURN_MASK)) {
 			// First update all edges to the block
 			// mark all predecessor edges with the flag
+
 			for (BasicBlock *Pred : predecessors(BB)) {
 				CFGEdge CE = std::make_pair(Pred->getTerminator(), BB);
 				updateReturnFlag(edgeErrMap[CE], NewFlag);
@@ -652,27 +650,15 @@ void SecurityChecksPass::checkErrHandle(Function *F,
 					markBBErr(BB, Must_Handle_Err, bbErrMap);
 					continue;
 				}
-
-				// Detect BUG, BUG_ON, WARN_ON more precisely
-#ifdef ASM_FUNC
-				if (FuncName.find("llvm") != std::string::npos || FuncName.empty())
-					continue;
-
-				smatch match;
-				string line;
-				getSourceCodeLine(CI, line);
-
-				if (regex_search(line, match, pattern)) {
-					auto FIter = Ctx->ErrorHandleFuncs.find(match[0].str());
-
-					if (FIter != Ctx->ErrorHandleFuncs.end()) {
-						markBBErr(BB, Must_Handle_Err, bbErrMap);
-						continue;
-					}
-				}
-#endif
 			}
 		}
+
+		// Level 2 check: an UnreachableInst indicates some kind of Handling
+		UnreachableInst *UI = dyn_cast<UnreachableInst>(BB->getTerminator());
+		if (!UI)
+			continue;
+
+		markBBErr(BB, Must_Handle_Err, bbErrMap);
 	}
 }
 
@@ -684,11 +670,13 @@ void SecurityChecksPass::identifySecurityChecks(Function *F,
 	BBErrMap bbErrMap;
 
 	edgeErrMap.clear();
+	dupErrMap.clear();
 	SCSet.clear();
+	ErrSelectInstSet.clear();
 
 #ifdef TEST_CASE
 	// Only test the specified functions
-	if (F->getName() != "tfrc_li_init")
+	if (F->getName() != "qtnf_core_register")
 		return;
 #endif
 
@@ -715,6 +703,9 @@ void SecurityChecksPass::identifySecurityChecks(Function *F,
 	// the index of the successor of the terminator instruction. This data structure
 	// may need to be promoted to SecurityChecksPass.
 	markAllEdgesErrFlag(F, bbErrMap, edgeErrMap);
+
+	if (!dupErrMap.empty())
+		overwriteEdgesFlag(F, edgeErrMap, dupErrMap);
 
 #ifdef DEBUG_PRINT
 	dumpErrEdges(edgeErrMap);
@@ -870,12 +861,18 @@ void SecurityChecksPass::checkErrValueFlow(
 
 				// The incoming value is a constant.
 				if (isConstant(IV)) {
-					if (isValueErrno(IV, F)) 
-						markBBErr(inBB, Must_Return_Err, bbErrMap);
-					else
+					if (isValueErrno(IV, F)) {
+						if (inBB->getTerminator()->getNumSuccessors() == 1) {
+							markBBErr(inBB, Must_Return_Err, bbErrMap); 
+						} else {
+							CFGEdge CEDup = std::make_pair(inBB->getTerminator(), BB);
+							dupErrMap[CEDup] = Must_Return_Err;
+						}
+					} else {
 						markBBErr(inBB, May_Return_Err, bbErrMap);
-				} 
-				else {
+					}
+
+				} else {
 					// Add the incoming value and the corresponding edge to the list.
 					Instruction *TI = inBB->getTerminator();
 					EEV.push_back(std::make_pair(std::make_pair(TI, BB), IV));
@@ -956,6 +953,7 @@ void SecurityChecksPass::checkErrValueFlow(
 #endif
 			auto FIter = Ctx->CopyFuncs.find(FName.str());
 			if (FIter != Ctx->CopyFuncs.end()) {
+				// Functions like ERR_PTR and PTR_ERR
 				if (get<1>(FIter->second) == -1) {
 					Value *Arg = 
 						CaI->getArgOperand(get<0>(FIter->second));
@@ -1003,7 +1001,7 @@ void SecurityChecksPass::checkErrValueFlow(
 					if (!Checked) 
 						continue;
 
-					int BrId = inferErrBranch(Cond);
+					unsigned BrId = inferErrBranch(Cond);
 					BasicBlock *ErrSucc;
 					if (BranchInst *BI = dyn_cast<BranchInst>(TI)) {
 						ErrSucc = BI->getSuccessor(BrId);
@@ -1012,7 +1010,8 @@ void SecurityChecksPass::checkErrValueFlow(
 						ErrSucc = SI->getSuccessor(BrId);
 					}
 
-					markBBErr(ErrSucc, Must_Return_Err, bbErrMap);
+					CFGEdge CEDup = std::make_pair(CallBB->getTerminator(), ErrSucc);
+					dupErrMap[CEDup] = Must_Return_Err;
 				}
 			}
 			else {
@@ -1068,6 +1067,15 @@ void SecurityChecksPass::checkErrValueFlow(
 	return;
 }
 
+void SecurityChecksPass::overwriteEdgesFlag(Function *F,
+		EdgeErrMap &edgeErrMap,	EdgeErrMap &dupErrMap) {
+
+	//OP << F->getName() << " rewrites " << dupErrMap.size() << " entries\n";
+	for (auto CEPair : dupErrMap) 
+		edgeErrMap[CEPair.first] = CEPair.second;
+
+}
+
 /// Add the identified check to the set
 void SecurityChecksPass::addSecurityCheck(Value *SC, Value *Br,
 		set<SecurityCheck *> &SCSet) {
@@ -1120,12 +1128,50 @@ void SecurityChecksPass::findSameVariablesFrom(Value *V,
 	}
 }
 
-/// Infer error-handling branch for a condition
-int SecurityChecksPass::inferErrBranch(Instruction *Cond) {
+/// Infer error-handling branch for a condition. Function is
+// currently valid only for BranchInst. SwitchInst requires more validation
+unsigned SecurityChecksPass::inferErrBranch(Instruction *Cond) {
 
-	// TODO: determine the error-handling branch
-	
-	return 0;
+	unsigned brID = 0;
+	auto *CmpI = dyn_cast<ICmpInst>(Cond);
+	if (!CmpI)
+		return brID;
+
+	ICmpInst::Predicate Pred = CmpI->getPredicate();
+	Value *V0 = CmpI->getOperand(0);
+	ConstantInt *CIBase = dyn_cast<ConstantInt>(CmpI->getOperand(1)); 
+
+	if (!CIBase)
+		return brID;
+
+	bool ptrType = V0->getType()->isPointerTy();
+	switch (Pred) {
+		case ICmpInst::ICMP_EQ:
+			// Compare with NULL
+			if (ptrType)
+				return brID;
+			// Is a return value of a callInst 
+			else if (CIBase->isZero())
+				return (brID + 1);
+			break;
+
+		case ICmpInst::ICMP_NE:
+			if (ptrType)
+				return (brID + 1);
+			else if (CIBase->isZero())
+				return (brID);
+			break;
+
+		case ICmpInst::ICMP_SLT:
+			//returning value < 0 are often errors
+			if (!ptrType) 
+				return CIBase->isZero() ? 0 : 1;
+			break;
+
+		default: break;
+	}
+
+	return brID;
 }
 
 bool SecurityChecksPass::doInitialization(Module *M) {

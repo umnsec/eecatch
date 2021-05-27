@@ -30,7 +30,7 @@
 #include "CallGraph.h"
 #include "Config.h"
 #include "SecurityChecks.h"
-#include "MissingChecks.h"
+#include "ExaggerateError.h"
 #include "PointerAnalysis.h"
 #include "TypeInitializer.h"
 
@@ -44,14 +44,9 @@ cl::opt<unsigned> VerboseLevel(
     "verbose-level", cl::desc("Print information at which verbose level"),
     cl::init(0));
 
-cl::opt<bool> SecurityChecks(
-    "sc", 
-    cl::desc("Identify sanity checks"), 
-    cl::NotHidden, cl::init(false));
-
-cl::opt<bool> MissingChecks(
-		"mc",
-		cl::desc("Identify missing-check bugs"),
+cl::opt<bool> ExaggerateErr(
+		"ee",
+		cl::desc("Identify exaggerated error handling scenarios"),
 		cl::NotHidden, cl::init(false));
 
 
@@ -116,15 +111,9 @@ void LoadStaticData(GlobalContext *GCtx) {
 	SetDataFetchFuncs(GCtx->DataFetchFuncs);
 }
 
-void ProcessResults(GlobalContext *GCtx) {
-}
-
 void PrintResults(GlobalContext *GCtx) {
-
-	OP<<"############## Result Statistics ##############\n";
-	OP<<"# Number of sanity checks: \t\t\t"<<GCtx->NumSecurityChecks<<"\n";
-	OP<<"# Number of conditional statements: \t\t"<<GCtx->NumCondStatements<<"\n";
 }
+
 
 int main(int argc, char **argv) {
 
@@ -169,14 +158,8 @@ int main(int argc, char **argv) {
 	CallGraphPass CGPass(&GlobalCtx);
 	CGPass.run(GlobalCtx.Modules);
 
-	// Identify sanity checks
-	if (SecurityChecks) {
-		SecurityChecksPass SCPass(&GlobalCtx);
-		SCPass.run(GlobalCtx.Modules);
-	}
-
 	// Identify missing-check bugs
-	if (MissingChecks) {
+	if (ExaggerateErr) {
 		// Pointer analysis
 		PointerAnalysisPass PAPass(&GlobalCtx);
 		PAPass.run(GlobalCtx.Modules);
@@ -184,13 +167,12 @@ int main(int argc, char **argv) {
 		SecurityChecksPass SCPass(&GlobalCtx);
 		SCPass.run(GlobalCtx.Modules);
 
-		MissingChecksPass MCPass(&GlobalCtx);
-		MCPass.run(GlobalCtx.Modules);
-		MCPass.processResults();
+		ExaggerateErrPass EEPass(&GlobalCtx);
+		EEPass.run(GlobalCtx.Modules);
 	}
 
 	// Print final results
-	//PrintResults(&GlobalCtx);
+	PrintResults(&GlobalCtx);
 
 	return 0;
 }

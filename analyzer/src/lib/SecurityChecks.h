@@ -8,8 +8,6 @@
 
 class SecurityChecksPass : public IterativeModulePass {
 
-	typedef std::pair<Instruction *, BasicBlock *> CFGEdge;
-	typedef std::pair<CFGEdge, Value *> EdgeValue;
 
 	enum ErrFlag {
 		// error returning, mask:0xF
@@ -28,16 +26,22 @@ class SecurityChecksPass : public IterativeModulePass {
 
 	public:
 
+	typedef std::pair<Instruction *, BasicBlock *> CFGEdge;
 	typedef std::map<CFGEdge, int> EdgeErrMap;
+	typedef std::pair<CFGEdge, Value *> EdgeValue;
 	typedef std::map<BasicBlock *, int> BBErrMap;
 
 	static set<Instruction *>ErrSelectInstSet;
 
 	private:
 
+	//Duplicate structure to store the edges instead of BB
+	EdgeErrMap dupErrMap;
+
+	void overwriteEdgesFlag(Function *, EdgeErrMap &, EdgeErrMap &);
+
 	// Dump marked edges.
 	void dumpErrEdges(EdgeErrMap &edgeErrMap);
-	bool isValueErrno(Value *V, Function *F);
 
 	///
 	/// Identifying sanity checks
@@ -94,9 +98,6 @@ class SecurityChecksPass : public IterativeModulePass {
 	// Find same-origin variables from the given variable
 	void findSameVariablesFrom(Value *V, std::set<Value *> &VSet);
 
-	// infer error-handling branch for a condition
-	int inferErrBranch(Instruction *Cond);
-
 
 	public:
 
@@ -111,6 +112,11 @@ class SecurityChecksPass : public IterativeModulePass {
 	void identifySecurityChecks(Function *F, 
 			EdgeErrMap &edgeErrMap, 
 			set<SecurityCheck *> &SCSet);
+
+	bool isValueErrno(Value *V, Function *F);
+
+	// infer error-handling branch for a condition
+	unsigned inferErrBranch(Instruction *Cond);
 
 };
 
