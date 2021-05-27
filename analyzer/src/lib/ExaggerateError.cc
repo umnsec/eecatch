@@ -52,7 +52,6 @@ const float threshold = 0.7;
 const unsigned severeErrLevel = WARNING;
 
 //
-//
 // Exaggerated Error Handling implementation
 //
 // For each function, collect all the return error values returned
@@ -635,7 +634,7 @@ bool ExaggerateErrPass::backtrackSource(Function *F, Instruction *SCI,
 
 // Return value as source: Collect called functions
 void ExaggerateErrPass::collectErrorCallInst(CallInst *CI,
-												set<err_t> &ErrSet) {
+				set<err_t> &ErrSet) {
 	smatch match;
 	Function *CF = CI->getCalledFunction();
 	CallSite CS(CI);
@@ -833,7 +832,8 @@ bool ExaggerateErrPass::getSpatialCtx(const string &s, string &dir) {
 
 // Determine the level the error is handled in the error path
 void ExaggerateErrPass::ExtractErrorSeverity(Function *F, SecurityCheck *SC,
-					SecurityChecksPass::EdgeErrMap &EEMap, HandleList &HList) {
+					SecurityChecksPass::EdgeErrMap &EEMap,
+					HandleList &HList) {
 
 	bool isReturned = false;
 	std::set<Value *> Visited;
@@ -947,7 +947,8 @@ void ExaggerateErrPass::ExtractErrorSeverity(Function *F, SecurityCheck *SC,
 // Given the SC in the current function returns error rather handling, 
 // we backtrack until we determine where the error is handled
 void ExaggerateErrPass::forwardInterErrHandling(Function *F, Value *V, 
-						std::set<Function*> &CFSet, HandleList &HList) {
+						std::set<Function*> &CFSet,
+						HandleList &HList) {
 
 	SecurityCheck *SC = nullptr;
 	if (Ctx->Callers.find(F) == Ctx->Callers.end())
@@ -1005,8 +1006,8 @@ void ExaggerateErrPass::forwardInterErrHandling(Function *F, Value *V,
 
 // Determine how the error from Branch is handled in the function
 void ExaggerateErrPass::determineErrorReturn (Value *Target, 
-					std::set<Value *> &Visited, bool* isReturned) {
-
+					std::set<Value *> &Visited, 
+					bool* isReturned) {
 	if (!Target) return;
 
 	if (*isReturned) return;
@@ -1196,8 +1197,8 @@ void ExaggerateErrPass::determineErrorBlock(SecurityCheck *SC,
 // Determine severity by checking for logging functions that have a severity
 // level embedded in their names
 void ExaggerateErrPass::searchLoggingFn(BBPath &BP, bool &isReturned,
-				std::set<BasicBlock *> &visitedBB, HandlePair &hpair) {
-
+				std::set<BasicBlock *> &visitedBB, 
+				HandlePair &hpair) {
 	uint8_t tmp_var = hpair.first;
 
 	for (BasicBlock *BB : BP) {
@@ -1567,7 +1568,8 @@ uint8_t ExaggerateErrPass::getCallSiteSeverity(CallInst *CI,
 
 // Perform backward traversal from the returnInst to determine error values
 void ExaggerateErrPass::performEEBackwardAnalysis(Function *F, 
-		 Value *V, std::set<Value *> &EVSet, std::set<Value *> &Visited) {
+			Value *V, std::set<Value *> &EVSet, 
+			std::set<Value *> &Visited) {
 
 	if (Visited.find(V) != Visited.end())
 		return;
@@ -1752,7 +1754,7 @@ void ExaggerateErrPass::ValueToInt(err_t *err, std::set<int> &ErrValues) {
 }
 
 bool ExaggerateErrPass::copyErrors(Function *F, SecurityCheck *SC,
-												set<err_t> &ErrSet) {
+				set<err_t> &ErrSet) {
 	set<Value *> CTSet;
 	Value *Check = SC->getSCheck();
 	identifyTargets(Check, CTSet);
